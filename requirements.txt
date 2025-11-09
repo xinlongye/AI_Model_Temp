@@ -1,0 +1,11 @@
+torch
+torchvision
+torchmetrics
+torchsummary
+torchinfo
+opencv-python
+numpy
+pyyaml
+tqdm
+wandb
+tabulate

@@ -1,0 +1,74 @@
+# 实验信息
+experiment_name: animal_90
+
+
+# 数据集
+dataset:
+  # 训练集
+  train:
+    type: ClsDataset
+    image_size: [256, 256]
+    dataset_path: /chengdu/yexinlong/AI_Model_Temp/dataset/animal_cls/animal_cls_train.txt
+    augment: True
+  # 验证集
+  val:
+    type: ClsDataset
+    image_size: [256, 256]
+    dataset_path: /chengdu/yexinlong/AI_Model_Temp/dataset/animal_cls/animal_cls_test.txt
+    augment: False
+  # 测试集
+  test:
+    type: ClsDataset
+    image_size: [256, 256]
+    dataset_path: /chengdu/yexinlong/AI_Model_Temp/dataset/animal_cls/animal_cls_test.txt
+    augment: False
+
+# 模型配置
+model:
+  type: ClsModel
+  pretrain_weight: ""
+  save_priod: 10
+
+
+# 训练设置
+train:
+  resume_train: True
+  checkpoint_path: ""
+  epoch: 300
+  batch_size: 32
+  num_visual: 4
+  visual_period: 30
+
+# 验证设置
+val:
+  batch_size: 32
+  num_visual: 4
+  visual_period: 30
+
+# 测试设置
+test:
+  checkpoint_path: ""
+  batch_size: 32
+  num_visual: 4
+
+
+# 网络结构
+network:
+  type: StarNet
+  base_dim: 20
+  depths: [1, 2, 4, 2]
+  mlp_ratio: 3
+  drop_path_rate: 0.2
+  num_classes: 90
+
+# 损失函数
+loss:
+  type: CESoftmaxLoss
+  loss_weight: 1.0
+  reduction: mean
+
+# 评价指标
+metric:
+  type: MultiClsAccuracy
+  num_classes: 90
+  top_k: 1

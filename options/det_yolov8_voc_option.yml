@@ -1,0 +1,69 @@
+# 实验信息
+experiment_name: coco
+
+
+# 数据集
+dataset:
+  # 训练集
+  train:
+    type: DISDataset
+    image_size: [640, 640]
+    dataset_path: D:\Code\Projects\python\AI_Model_Temp\data_txt\voc_det\voc_det_train.txt
+    augment: True
+    epoch: 100
+  # 验证集
+  val:
+    type: DISDataset
+    image_size: [640, 640]
+    dataset_path: D:\Code\Projects\python\AI_Model_Temp\data_txt\voc_det\voc_det_val.txt
+    augment: False
+  # 测试集
+  test:
+    type: DISDataset
+    image_size: [640, 640]
+    dataset_path: D:\Code\Projects\python\AI_Model_Temp\data_txt\voc_det\voc_det_test.txt
+    augment: False
+
+# 模型配置
+model:
+  type: DISModel
+  pretrain_weight: ""
+  save_period: 10
+
+
+# 训练设置
+train:
+  resume_train: True
+  checkpoint_path: ""
+  epoch: 100
+  batch_size: 24
+  num_visual: 4
+  visual_period: 10
+
+# 验证设置
+val:
+  batch_size: 24
+  num_visual: 4
+  visual_period: 10
+
+# 测试设置
+test:
+  batch_size: 16
+  num_visual: 4
+
+
+# 网络结构
+network:
+  type: YOLOV8Net
+  model_type: s
+  num_class: 80
+  input_shape: (640, 640)
+
+# 损失函数
+loss:
+  type: U2NetLoss
+  loss_weight: [1.0, 0.7, 0.6, 0.5, 0.3, 0.2, 0.3]
+
+# 评价指标
+metric:
+  type: BinaryMIoUMetric
