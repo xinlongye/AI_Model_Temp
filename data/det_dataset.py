@@ -247,44 +247,52 @@ def letterbox(src_image, src_box, out_shape, color=(128, 128, 128)):
 
     return letterboxed_img, letterboxed_box
 
-def geometric_enhancement(src_image, src_box, rotate=90):
+def geometric_enhancement(src_image, src_box, rotate=90, translate=(0.2, 0.1)):
     """
     基础几何增强，一般情况下图像和边界框都会变化
     包括：平移、缩放、翻转、旋转、
     :param src_image: 原图
     :param src_box: 边界框标签，x1y1x2y2 cls
     :param rotate: 旋转角度
+    :param translate: 水平垂直平移比例
     :return: 几何变换后图像与边界框
     """
     # 旋转
-    h, w = src_image.shape[:2]
-    x1, y1, x2, y2 = src_box[:4]
-    new_x1 = 0
-    new_y1 = 0
-    new_x2 = 0
-    new_y2 = 0
-    match rotate:
-        case 90:
-            src_image = cv2.rotate(src_image, cv2.ROTATE_90_CLOCKWISE)
-            new_x1 = y1
-            new_y1 = h - 1 - x2
-            new_x2 = y2
-            new_y2 = h - 1 - x1
-        case 180:
-            src_image = cv2.rotate(src_image, cv2.ROTATE_180)
-            new_x1 = w - 1 - x2
-            new_y1 = h - 1 - y2
-            new_x2 = w - 1 - x1
-            new_y2 = h - 1 - y1
-        case 270:
-            src_image = cv2.rotate(src_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            new_x1 = w - 1 - y2
-            new_y1 = x1
-            new_x2 = w - 1 - y1
-            new_y2 = x2
-        case _:
-            pass
-    src_box = [new_x1, new_y1, new_x2, new_y2, src_box[4]]
+    if rotate != 0:
+        h, w = src_image.shape[:2]
+        match rotate:
+            case 90:
+                src_image = cv2.rotate(src_image, cv2.ROTATE_90_CLOCKWISE)
+            case 180:
+                src_image = cv2.rotate(src_image, cv2.ROTATE_180)
+            case 270:
+                src_image = cv2.rotate(src_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            case _:
+                pass
+        for index, in_box in enumerate(src_box):
+            x1, y1, x2, y2 = in_box[:4]
+            new_x1 = 0
+            new_y1 = 0
+            new_x2 = 0
+            new_y2 = 0
+            if rotate == 90:
+                new_x1 = h - 1 - y2
+                new_y1 = x1
+                new_x2 = h - 1 - y1
+                new_y2 = x2
+            elif rotate == 180:
+                new_x1 = w - 1 - x2
+                new_y1 = h - 1 - y2
+                new_x2 = w - 1 - x1
+                new_y2 = h - 1 - y1
+            elif rotate == 270:
+                new_x1 = y2
+                new_y1 = w - 1 - x1
+                new_x2 = y1
+                new_y2 = w - 1 - x2
+            src_box[index] = [new_x1, new_y1, new_x2, new_y2, src_box[index][4]]
+
+    # 平移
 
     return src_image, src_box
 
@@ -292,7 +300,7 @@ def geometric_enhancement(src_image, src_box, rotate=90):
 @DATASET_REGISTRY.register()
 class DetDataset(torch.utils.data.Dataset):
     """
-    分类数据集
+    目标检测数据集
     """
 
     def __init__(self, image_size, dataset_path, augment, epoch):
@@ -321,28 +329,35 @@ class DetDataset(torch.utils.data.Dataset):
         """
         单张图像
         """
-        # # 图像数据
-        # img_path = self.annotation_lines[index].split(';')[0].split()[0]
-        # image = cv2.imread(img_path, 1)
-        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # # 标签数据
-        # bbox = []
-        # if len(self.annotation_lines[index].split(';')) > 1:
-        #     box_list = self.annotation_lines[index].split(';')[1:-1]
-        #     for box_str in box_list:
-        #         bbox.append(np.array([float(i) for i in box_str.split(",")]))
-        # bbox = np.array(bbox, dtype=np.int32)
-        # # letterbox增强
+        # 图像数据
+        img_path = self.annotation_lines[index].split(';')[0].split()[0]
+        image = cv2.imread(img_path, 1)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # 标签数据
+        bbox = []
+        if len(self.annotation_lines[index].split(';')) > 1:
+            box_list = self.annotation_lines[index].split(';')[1:-1]
+            for box_str in box_list:
+                bbox.append(np.array([float(i) for i in box_str.split(",")]))
+        bbox = np.array(bbox, dtype=np.int32)
+
+        # 几何变换增强
+        image, bbox = geometric_enhancement(src_image=image,
+                                            src_box=bbox,
+                                            rotate=90,
+                                            translate=(0.2, 0.1))
+
+        # letterbox增强
         # image, bbox = letterbox(image, bbox, out_shape=self.image_shape)
 
         """
         多张图像混合增强
         """
         # mosaic: 随机挑选3张 + 当前索引图像 一共四张进行融合
-        label_lines = random.sample(self.annotation_lines, 3)
-        label_lines.append(self.annotation_lines[index])
-        random.shuffle(label_lines)
-        image, bbox = mosaic_enhancement(label_lines=label_lines, out_shape=self.image_shape, color=(128, 128, 128))
+        # label_lines = random.sample(self.annotation_lines, 3)
+        # label_lines.append(self.annotation_lines[index])
+        # random.shuffle(label_lines)
+        # image, bbox = mosaic_enhancement(label_lines=label_lines, out_shape=self.image_shape, color=(128, 128, 128))
 
         # 在前面的epoch中进行数据增强， 最后n个epoch中不进行数据增强
         return image, bbox
