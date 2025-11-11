@@ -247,7 +247,11 @@ def letterbox(src_image, src_box, out_shape, color=(128, 128, 128)):
 
     return letterboxed_img, letterboxed_box
 
-def geometric_enhancement(src_image, src_box, rotate=90, translate=(0.2, 0.1)):
+def geometric_enhancement(src_image, src_box,
+                          rotate=90,
+                          translate=(0.2, 0.1),
+                          flip_up_down=True,
+                          flip_left_right=True):
     """
     基础几何增强，一般情况下图像和边界框都会变化
     包括：平移、缩放、翻转、旋转、
@@ -255,6 +259,8 @@ def geometric_enhancement(src_image, src_box, rotate=90, translate=(0.2, 0.1)):
     :param src_box: 边界框标签，x1y1x2y2 cls
     :param rotate: 旋转角度
     :param translate: 水平垂直平移比例
+    :param flip_up_down: 上下翻转
+    :param flip_left_right: 左右翻转
     :return: 几何变换后图像与边界框
     """
     # 旋转
@@ -293,6 +299,51 @@ def geometric_enhancement(src_image, src_box, rotate=90, translate=(0.2, 0.1)):
             src_box[index] = [new_x1, new_y1, new_x2, new_y2, src_box[index][4]]
 
     # 平移
+    if translate[0] != 0 or translate[1] != 0:
+        h, w = src_image.shape[:2]
+        shift_x = w * translate[0]
+        shift_y = h * translate[1]
+        # 图像变换
+        m_shift = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
+        src_image = cv2.warpAffine(src_image, M=m_shift, dsize=(w, h), borderValue=(128, 128, 128))
+
+        # 边界框变换
+        shift_box = []
+        valid_index = 0
+        for index, in_box in enumerate(src_box):
+            x1, y1, x2, y2 = in_box[:4]
+            new_x1 = max(0, min(w - 1, int(x1 + shift_x)))
+            new_y1 = max(0, min(h - 1, int(y1 + shift_y)))
+            new_x2 = max(0, min(w - 1, int(x2 + shift_x)))
+            new_y2 = max(0, min(h - 1, int(y2 + shift_y)))
+            if (new_x2 - new_x1 > 10) and (new_y2 - new_y1 > 10):
+                shift_box.append([new_x1, new_y1, new_x2, new_y2, src_box[index][4]])
+                valid_index += 1
+        src_box = np.array(shift_box, dtype=np.int32)
+
+    # 上下翻转
+    if flip_up_down:
+        # 图像变换
+        src_image = cv2.flip(src_image, 0)
+        # box变换
+        h, w = src_image.shape[:2]
+        for index, in_box in enumerate(src_box):
+            x1, y1, x2, y2 = in_box[:4]
+            new_y1 = h - 1 - y1
+            new_y2 = h - 1 - y2
+            src_box[index] = [x1, new_y1, x2, new_y2, src_box[index][4]]
+
+    if flip_left_right:
+        # 图像变换
+        src_image = cv2.flip(src_image, 1)
+        # box变换
+        h, w = src_image.shape[:2]
+        for index, in_box in enumerate(src_box):
+            x1, y1, x2, y2 = in_box[:4]
+            new_x1 = w - 1 - x1
+            new_x2 = w - 1 - x2
+            src_box[index] = [new_x1, y1, new_x2, y2, src_box[index][4]]
+
 
     return src_image, src_box
 
@@ -344,8 +395,10 @@ class DetDataset(torch.utils.data.Dataset):
         # 几何变换增强
         image, bbox = geometric_enhancement(src_image=image,
                                             src_box=bbox,
-                                            rotate=90,
-                                            translate=(0.2, 0.1))
+                                            rotate=0,
+                                            translate=(0, 0),
+                                            flip_up_down=False,
+                                            flip_left_right=True)
 
         # letterbox增强
         # image, bbox = letterbox(image, bbox, out_shape=self.image_shape)
