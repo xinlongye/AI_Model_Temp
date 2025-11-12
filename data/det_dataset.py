@@ -13,6 +13,41 @@ import yaml
 from model_utils.registry import DATASET_REGISTRY
 
 
+def get_label_from_line(line, rgb=True):
+    # 图像数据
+    img_path = line.split(';')[0].split()[0]
+    image = cv2.imread(img_path, 1)
+    if rgb:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # 标签数据
+    bbox = []
+    if len(line.split(';')) > 1:
+        box_list = line.split(';')[1:-1]
+        for box_str in box_list:
+            bbox.append(np.array([float(i) for i in box_str.split(",")]))
+    bbox = np.array(bbox, dtype=np.int32)
+
+    return image, bbox
+
+def hsv_enhancement(src_image, rgb=True, hue_factor = 0.1, sat_factor = 0.7, val_factor = 0.4):
+    if rgb:
+        hsv_image = cv2.cvtColor(src_image, cv2.COLOR_RGB2HSV)
+    else:
+        hsv_image = cv2.cvtColor(src_image, cv2.COLOR_BGR2HSV)
+    hue, sat, val = cv2.split(hsv_image)
+    r = np.random.uniform(-1, 1, 3) * [hue_factor, sat_factor, val_factor] + 1
+    x = np.arange(0, 256, dtype=r.dtype)
+    lut_hue = ((x * r[0]) % 180).astype(dtype=np.uint8)
+    lut_sat = np.clip(x * r[1], 0, 255).astype(dtype=np.uint8)
+    lut_val = np.clip(x * r[2], 0, 255).astype(dtype=np.uint8)
+
+    src_image = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
+    if rgb:
+        src_image = cv2.cvtColor(src_image, cv2.COLOR_HSV2RGB)
+    else:
+        src_image = cv2.cvtColor(src_image, cv2.COLOR_HSV2BGR)
+    return src_image
+
 def mosaic_enhancement(label_lines, out_shape, color=(128, 128, 128)):
     """
     :param label_lines: 图像路径与标签列表
@@ -29,20 +64,10 @@ def mosaic_enhancement(label_lines, out_shape, color=(128, 128, 128)):
     merge_image = np.zeros(shape=(out_shape[1], out_shape[0], 3), dtype=np.uint8)
 
     lb_boxes_list = []
-    merge_bbox = []
     # 获取图像与对应标签列表
     for index, line in enumerate(label_lines):
-        # 图像数据
-        img_path = line.split(';')[0].split()[0]
-        image = cv2.imread(img_path, 1)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # 标签数据
-        bbox = []
-        if len(line.split(';')) > 1:
-            box_list = line.split(';')[1:-1]
-            for box_str in box_list:
-                bbox.append(np.array([float(i) for i in box_str.split(",")]))
-        bbox = np.array(bbox, dtype=np.int32)
+        # 获取标签图像数据
+        image, bbox = get_label_from_line(line)
 
         # letterbox
         lb_image, lb_box = letterbox_ratio(src_image=image, src_box=bbox, out_shape=out_shape, place=index, color=color)
@@ -60,6 +85,7 @@ def mosaic_enhancement(label_lines, out_shape, color=(128, 128, 128)):
         if index == 3:
             merge_image[y_cut:, x_cut:, :] = lb_image[y_cut:, x_cut:, :]
 
+    merge_bbox = []
     # 处理合并所有的边界框
     for box_index, m_boxes in enumerate(lb_boxes_list):
         if len(m_boxes) == 0:
@@ -116,14 +142,31 @@ def mosaic_enhancement(label_lines, out_shape, color=(128, 128, 128)):
                     if x2 - x1 < 5:
                         continue
 
-            tmp_box.append(x1)
-            tmp_box.append(y1)
-            tmp_box.append(x2)
-            tmp_box.append(y2)
-            tmp_box.append(m_box[-1])
+            tmp_box.append(int(x1))
+            tmp_box.append(int(y1))
+            tmp_box.append(int(x2))
+            tmp_box.append(int(y2))
+            tmp_box.append(int(m_box[-1]))
             merge_bbox.append(tmp_box)
-
+    merge_bbox = np.array(merge_bbox, np.int32)
     return merge_image, merge_bbox
+
+
+def mixup_enhancement(src_image_1, src_box_1, src_image_2, src_box_2):
+    # 图像变换
+    src_image_1 = np.array(src_image_1, dtype=np.float32)
+    src_image_2 = np.array(src_image_2, dtype=np.float32)
+    src_image = np.array(src_image_1 * 0.5 + src_image_2 * 0.5, dtype=np.uint8)
+
+    # 边界框变换
+    if len(src_box_1) == 0:
+        src_box = src_box_2
+    elif len(src_box_2) == 0:
+        src_box = src_box_1
+    else:
+        src_box = np.concatenate([src_box_1, src_box_2], axis=0)
+
+    return src_image, src_box
 
 
 def letterbox_ratio(src_image, src_box, out_shape, place, color=(128, 128, 128)):
@@ -247,9 +290,10 @@ def letterbox(src_image, src_box, out_shape, color=(128, 128, 128)):
 
     return letterboxed_img, letterboxed_box
 
+
 def geometric_enhancement(src_image, src_box,
                           rotate=90,
-                          translate=(0.2, 0.1),
+                          translate=[0.2, 0.1],
                           flip_up_down=True,
                           flip_left_right=True):
     """
@@ -344,7 +388,6 @@ def geometric_enhancement(src_image, src_box,
             new_x2 = w - 1 - x2
             src_box[index] = [new_x1, y1, new_x2, y2, src_box[index][4]]
 
-
     return src_image, src_box
 
 
@@ -358,8 +401,8 @@ class DetDataset(torch.utils.data.Dataset):
         super(DetDataset, self).__init__()
 
         # 读取数据集文件
-        with open(dataset_path, "r", encoding='utf-8') as f:
-            self.annotation_lines = f.readlines()
+        with open(dataset_path, "r", encoding='utf-8') as file_data:
+            self.annotation_lines = file_data.readlines()
 
         # 图像输出尺寸, (w, h)
         self.image_shape = image_size
@@ -377,40 +420,51 @@ class DetDataset(torch.utils.data.Dataset):
         self.current_epoch = -1
 
     def __getitem__(self, index):
-        """
-        单张图像
-        """
-        # 图像数据
-        img_path = self.annotation_lines[index].split(';')[0].split()[0]
-        image = cv2.imread(img_path, 1)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # 标签数据
-        bbox = []
-        if len(self.annotation_lines[index].split(';')) > 1:
-            box_list = self.annotation_lines[index].split(';')[1:-1]
-            for box_str in box_list:
-                bbox.append(np.array([float(i) for i in box_str.split(",")]))
-        bbox = np.array(bbox, dtype=np.int32)
 
-        # 几何变换增强
-        image, bbox = geometric_enhancement(src_image=image,
-                                            src_box=bbox,
-                                            rotate=0,
-                                            translate=(0, 0),
-                                            flip_up_down=False,
-                                            flip_left_right=True)
+        if self.augment:
+            """
+            多张图像混合增强
+            """
+            # mosaic: 随机挑选3张 + 当前索引图像 一共四张进行融合
+            label_lines_mosaic = random.sample(self.annotation_lines, 3)
+            label_lines_mosaic.append(self.annotation_lines[index])
+            random.shuffle(label_lines_mosaic)
+            image, bbox = mosaic_enhancement(label_lines=label_lines_mosaic, out_shape=self.image_shape, color=(128, 128, 128))
 
-        # letterbox增强
-        # image, bbox = letterbox(image, bbox, out_shape=self.image_shape)
-
-        """
-        多张图像混合增强
-        """
-        # mosaic: 随机挑选3张 + 当前索引图像 一共四张进行融合
-        # label_lines = random.sample(self.annotation_lines, 3)
-        # label_lines.append(self.annotation_lines[index])
-        # random.shuffle(label_lines)
-        # image, bbox = mosaic_enhancement(label_lines=label_lines, out_shape=self.image_shape, color=(128, 128, 128))
+            if random.uniform(0, 1) > 0.5:
+                # mixup: 随机挑选一张图像 + 当前索引图像, 一共两张图像进行融合
+                label_lines_mixup = random.sample(self.annotation_lines, 1)
+                image_2, bbox_2 = get_label_from_line(line=label_lines_mixup[0])
+                # 几何变换增强
+                image_2, bbox_2 = geometric_enhancement(src_image=image_2,
+                                                        src_box=bbox_2,
+                                                        rotate=0,
+                                                        translate=[random.uniform(-0.2, 0.2),random.uniform(-0.2, 0.2)],
+                                                        flip_up_down=random.uniform(0, 1) > 0.5,
+                                                        flip_left_right=random.uniform(0, 1) < 0.5)
+                # letterbox增强
+                image_2, bbox_2 = letterbox(image_2, bbox_2, out_shape=self.image_shape)
+                # 色彩空间增强
+                image_2 = hsv_enhancement(image_2, rgb=True)
+                # mixup增强
+                image, bbox = mixup_enhancement(image, bbox, image_2, bbox_2)
+        else:
+            """
+            单张图像
+            """
+            # 获取标签图像数据
+            image, bbox = get_label_from_line(line=self.annotation_lines[index])
+            # 几何变换增强
+            image, bbox = geometric_enhancement(src_image=image,
+                                                src_box=bbox,
+                                                rotate=random.choice([0, 90, 180, 270]),
+                                                translate=[0, 0],
+                                                flip_up_down=False,
+                                                flip_left_right=True)
+            # letterbox增强
+            image, bbox = letterbox(image, bbox, out_shape=self.image_shape)
+            # 色彩空间增强
+            image = hsv_enhancement(image, rgb=True)
 
         # 在前面的epoch中进行数据增强， 最后n个epoch中不进行数据增强
         return image, bbox
@@ -431,9 +485,10 @@ if __name__ == "__main__":
     det_dataset = DetDataset(image_size=train_param["image_size"],
                              dataset_path=train_param["dataset_path"],
                              augment=train_param["augment"],
-                             epoch=train_param["epoch"])   #13700
+                             epoch=train_param["epoch"])  # 13700
     # show
     show_image, box = det_dataset[1]
+    # print("box.shape = ", box.shape)
 
     # draw box
     for box_rect in box:
